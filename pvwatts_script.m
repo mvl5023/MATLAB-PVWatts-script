@@ -12,10 +12,10 @@ filename = 'pvwatts_hourly.xlsx';
 type = 2;
 
 % Enter microcell efficiency
-pvEff = 0.30;
+pvEff = 0.40;
 
 % Adjust for timezone
-timezone = -7;
+timezone = -5;
 
 % Enter year
 year = 2016;
@@ -30,11 +30,12 @@ lon = xlsread(filename, 'B5:B5') * -1;
 deltaT = 0.041666666 * timezone;
 minute = 0;
 second = 0;
-etaGl = 1.526;
+indexGl = 1.526;
 elev = xlsread(filename, 'B6:B6');
 time = xlsread(filename, 'A19:C8778');
 beamIr = xlsread(filename, 'D19:D8778');
 diffIr = xlsread(filename, 'E19:E8778');
+diffIrtot = xlsread(filename, 'E8779:E8779');
 tempAmb = xlsread(filename, 'F19:F8778');
 wind = xlsread(filename, 'G19:G8778');
 planeIr = xlsread(filename, 'H19:H8778');
@@ -54,7 +55,7 @@ sunPos = zeros(8760, 2);        %solar azimuth/zenith values from algorithm
 sunPosR = zeros(8760, 3);       %solar position vectors in rectangular form
 sunPosNewR = zeros(8760, 3);    %post-transform solar position vectors in rectangular form
 sunPosNew = zeros(8760, 2);     %post-transform solar position vectors in spherical form
-incidence = zeros(8760, 2);     %angle of incidence of the sun with respect to panel normal
+incidence = zeros(8760, 1);     %angle of incidence of the sun with respect to panel normal
 incidence2 = zeros(8760, 1);
 delIn = zeros(8760, 1);
 sumIn = zeros(8760, 1);
@@ -115,20 +116,12 @@ for k = 1:8760
         sunPosNew(k,1) = sunPosNew(k,1) + 180;
     end       
     
-    incidence(k,1) = abs(90 - sunPosNew(k,2)); 
+    incidence(k) = abs(90 - sunPosNew(k,2));     
     
-    if beamIr(k) == 0
-        incidence(k,2) = 180;
-    elseif abs((planeIr(k) - diffIr(k))./beamIr(k)) > 1
-        incidence(k,2) = -90;
-    else
-        incidence(k,2) = acosd((planeIr(k) - diffIr(k))./beamIr(k));
-    end
-    
-    if incidence(k,1) < 90
-        incidence2(k) = asind((1/etaGl) * sind(incidence(k,1)));
-        delIn(k) = incidence2(k) - incidence(k,1);
-        sumIn(k) = incidence2(k) + incidence(k,1);
+    if incidence(k) < 90
+        incidence2(k) = asind((1/indexGl) * sind(incidence(k)));
+        delIn(k) = incidence2(k) - incidence(k);
+        sumIn(k) = incidence2(k) + incidence(k);
         transmittance(k) = 1 - 0.5*((sind(delIn(k))^2)/(sind(sumIn(k))^2) + (tand(delIn(k))^2)/(tand(sumIn(k))^2));
     else
         incidence2(k) = 180;
@@ -140,46 +133,65 @@ for k = 1:8760
     if incidence(k,1) > 90
        planeIr2(k) = 0;
     else
-       planeIr2(k) = (beamIr(k) .* cosd(incidence(k,1))) + ((180 - theta)/180) * diffIr(k);
+       planeIr2(k) = (beamIr(k) .* cosd(incidence(k))) + ((180 - theta)/180) * diffIr(k);
     end
         
 end
 
+incidence2 = acosd(sind(90-sunPos(:,2)).*cosd(phi - sunPos(:,1)).*sind(theta) + cosd(90 - sunPos(:,2)).*cosd(theta));
+
 % Generating efficiency values for BK7 and PMMA based on incidence angle
-effBK7 = interp1(bk7(1,:), bk7(2,:), incidence(:,1), 'spline', 0);
-effPMMA = interp1(pmma(1,:), pmma(2,:), incidence(:,1), 'spline', 0);
+effBK7 = interp1(bk7(1,:), bk7(2,:), incidence2(:), 'spline', 0);
+effPMMA = interp1(pmma(1,:), pmma(2,:), incidence2(:), 'spline', 0);
 
 % Calculating PoA irradiance for BK7 and PMMA optics
-planeBK7 = beamIr .* cosd(incidence(:,1)) .* effBK7;
-planePMMA = beamIr .* cosd(incidence(:,1)) .* effPMMA;
+planeBK7 = beamIr .* cosd(incidence2(:));
+planePMMA = beamIr .* cosd(incidence2(:));
+planeTot = sum(planeBK7);
 
 % Calculating DC power for BK7 and PMMA optics
-powerBK7 = (sizePanel * systemEff * pvEff) .* planeBK7; 
-powerPMMA = (sizePanel * systemEff * pvEff) .* planePMMA;
+powerBK7 = (systemEff * pvEff) .*effBK7 .* planeBK7; 
+powerPMMA = (systemEff * pvEff) .*effPMMA .* planePMMA;
+powerTot = [sum(powerBK7), sum(powerPMMA)];
 
 % Recalculating output DC power for new angles of incidence
 powerDC = (sizePanel * systemEff * panelEff) .* planeIr2 .* transmittance;
-powerTot = [sum(powerDC) , sum(powerBK7) , sum(powerPMMA)];
 
 % Calculating percent of original panel total power for BK7 and PMMA
 % concentrators
-ratios = [(powerTot(2)/powerTot(1)) * 100, (powerTot(3)/powerTot(1)) * 100];
+ratios = [(sizePanel * powerTot(1)/outDCtot) * 100, (sizePanel * powerTot(2)/outDCtot) * 100];
 directCompare = [beamIr .* cosd(incidence(:,1)), planeBK7, planePMMA];
 
+effBK7mod = (systemEff * pvEff) * effBK7;
+effPMMAmod = (systemEff * pvEff) * effPMMA;
+
+effBK7mod2 = powerBK7 ./ (planeBK7 + diffIr);
+effPMMAmod2 = powerPMMA ./ (planePMMA + diffIr);
+
+
 % Writing new values to Excel workbook
-xlswrite(filename, {'DC System Out (W), BK7 Optics '}, 1, 'L18:L18');
-xlswrite(filename, powerBK7, 1, 'L19');
-xlswrite(filename, powerTot(2), 1, 'L8779:L8779');
+xlswrite(filename, {'DC System Out (W), BK7 Optics '}, 1, 'M18:M18');
+xlswrite(filename, sizePanel * powerBK7, 1, 'M19');
+xlswrite(filename, sizePanel * powerTot(1), 'M8779:M8779');
+xlswrite(filename, {'BK7 Module efficiency (DC power/POA Irradiance)'}, 1, 'N18:N18');
+xlswrite(filename, effBK7mod, 1, 'N19');
+xlswrite(filename, (powerTot(1)/planeTot), 1, 'N8779:N8779');
+xlswrite(filename, {'BK7 Module efficiency (DC power/POA Irradiance + Diffuse)'}, 1, 'O18:O18');
+xlswrite(filename, effBK7mod2, 1, 'O19');
+xlswrite(filename, (powerTot(1)/(planeTot + diffIrtot)), 1, 'O8779:O8779');
 
-xlswrite(filename, {'DC System Out (W), PMMA Optics'}, 1, 'M18:M18');
-xlswrite(filename, powerPMMA, 1, 'M19');
-xlswrite(filename, powerTot(3), 1, 'M8779:M8779');
+xlswrite(filename, {'DC System Out (W), PMMA Optics'}, 1, 'Q18:Q18');
+xlswrite(filename, sizePanel * powerPMMA, 1, 'Q19');
+xlswrite(filename, sizePanel * powerTot(2), 1, 'Q8779:Q8779');
+xlswrite(filename, {'PMMA Module efficiency (DC power/POA Irradiance)'}, 1, 'R18:R18');
+xlswrite(filename, effPMMAmod, 1, 'R19');
+xlswrite(filename, (powerTot(2)/planeTot), 1, 'R8779:R8779');
+xlswrite(filename, {'PMMA Module efficiency (DC power/POA Irradiance + Diffuse)'}, 1, 'S18:S18');
+xlswrite(filename, effPMMAmod2, 1, 'S19');
+xlswrite(filename, (powerTot(2)/(planeTot + diffIrtot)), 1, 'S8779:S8779');
 
-xlswrite(filename, {'DC System Out (W), PVWatts'}, 1, 'N18:N18');
-xlswrite(filename, powerDC, 1, 'N19');
-xlswrite(filename, powerTot(1), 1, 'N8779:N8779');
-
-xlswrite(filename, {'% of original'}, 1, 'A8780:A8780');
-xlswrite(filename, ratios, 1, 'L8780:M8780');
+xlswrite(filename, {'% of original'}, 1, 'L8780:L8780');
+xlswrite(filename, ratios(1), 1, 'M8780:M8780');
+xlswrite(filename, ratios(2), 1, 'Q8780:Q8780');
 
 
