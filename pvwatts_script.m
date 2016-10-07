@@ -116,7 +116,7 @@ for k = 1:8760
         sunPosNew(k,1) = sunPosNew(k,1) + 180;
     end       
     
-    incidence(k) = abs(90 - sunPosNew(k,2));     
+    incidence(k) = acosd(sind(90-sunPos(k,2))*cosd(phi - sunPos(k,1))*sind(theta) + cosd(90 - sunPos(k,2))*cosd(theta));  
     
     if incidence(k) < 90
         incidence2(k) = asind((1/indexGl) * sind(incidence(k)));
@@ -133,33 +133,32 @@ for k = 1:8760
     if incidence(k,1) > 90
        planeIr2(k) = 0;
     else
-       planeIr2(k) = (beamIr(k) .* cosd(incidence(k))) + ((180 - theta)/180) * diffIr(k);
+       planeIr2(k) = (beamIr(k) * cosd(incidence(k))) + ((180 - theta)/180) * diffIr(k);
     end
         
 end
 
-incidence2 = acosd(sind(90-sunPos(:,2)).*cosd(phi - sunPos(:,1)).*sind(theta) + cosd(90 - sunPos(:,2)).*cosd(theta));
+% Recalculating output DC power for new angles of incidence
+powerDC = (systemEff * panelEff) .* planeIr2 .* transmittance;
 
 % Generating efficiency values for BK7 and PMMA based on incidence angle
-effBK7 = interp1(bk7(1,:), bk7(2,:), incidence2(:), 'spline', 0);
-effPMMA = interp1(pmma(1,:), pmma(2,:), incidence2(:), 'spline', 0);
+effBK7 = interp1(bk7(1,:), bk7(2,:), incidence(:), 'spline', 0);
+effPMMA = interp1(pmma(1,:), pmma(2,:), incidence(:), 'spline', 0);
 
 % Calculating PoA irradiance for BK7 and PMMA optics
-planeBK7 = beamIr .* cosd(incidence2(:));
-planePMMA = beamIr .* cosd(incidence2(:));
+planeBK7 = beamIr .* cosd(incidence(:));
+planePMMA = beamIr .* cosd(incidence(:));
 planeTot = sum(planeBK7);
 
 % Calculating DC power for BK7 and PMMA optics
 powerBK7 = (systemEff * pvEff) .*effBK7 .* planeBK7; 
 powerPMMA = (systemEff * pvEff) .*effPMMA .* planePMMA;
-powerTot = [sum(powerBK7), sum(powerPMMA)];
-
-% Recalculating output DC power for new angles of incidence
-powerDC = (sizePanel * systemEff * panelEff) .* planeIr2 .* transmittance;
+powerTot = [sum(powerBK7), sum(powerPMMA), sum(powerDC)];
 
 % Calculating percent of original panel total power for BK7 and PMMA
 % concentrators
 ratios = [(sizePanel * powerTot(1)/outDCtot) * 100, (sizePanel * powerTot(2)/outDCtot) * 100];
+ratios2 = [(powerTot(1)/powerTot(3)) * 100, (powerTot(2)/powerTot(3)) * 100];
 directCompare = [beamIr .* cosd(incidence(:,1)), planeBK7, planePMMA];
 
 effBK7mod = (systemEff * pvEff) * effBK7;
@@ -167,7 +166,6 @@ effPMMAmod = (systemEff * pvEff) * effPMMA;
 
 effBK7mod2 = powerBK7 ./ (planeBK7 + diffIr);
 effPMMAmod2 = powerPMMA ./ (planePMMA + diffIr);
-
 
 % Writing new values to Excel workbook
 xlswrite(filename, {'DC System Out (W), BK7 Optics '}, 1, 'M18:M18');
@@ -193,5 +191,15 @@ xlswrite(filename, (powerTot(2)/(planeTot + diffIrtot)), 1, 'S8779:S8779');
 xlswrite(filename, {'% of original'}, 1, 'L8780:L8780');
 xlswrite(filename, ratios(1), 1, 'M8780:M8780');
 xlswrite(filename, ratios(2), 1, 'Q8780:Q8780');
+xlswrite(filename, {'% of recalculated'}, 1, 'L8781:L8781');
+xlswrite(filename, ratios2(1), 1, 'M8781:M8781');
+xlswrite(filename, ratios2(2), 1, 'Q8781:Q8781');
 
+xlswrite(filename, {'Recalculated Flat Panel DC Power'}, 1, 'U18:U18');
+xlswrite(filename, sizePanel * powerDC, 1, 'U19');
+xlswrite(filename, sizePanel * powerTot(3), 'U8779:U8779');
+xlswrite(filename, powerTot(3) / sum(planeIr2), 1, 'U8780:U8780');
+xlswrite(filename, {'%Diff.'}, 1, 'T8781:T8781');
+xlswrite(filename, 200*(sizePanel*powerTot(3) - outDCtot)/(sizePanel*powerTot(3) + outDCtot), 'U8781:U8781');
 
+xlswrite(filename, (outDCtot/sizePanel) / sum(planeIr), 1, 'J8780:J8780');
