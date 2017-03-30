@@ -15,7 +15,7 @@ type = 2;
 pvEff = 0.40;
 
 % Adjust for timezone
-timezone = -5;
+timezone = -7;
 
 % Enter year
 year = 2016;
